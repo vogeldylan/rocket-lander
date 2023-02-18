@@ -156,6 +156,12 @@ class RocketLander(gym.Env):
         # Step through one action = [0, 0, 0] and return the state, reward etc.
         return self.step(np.array([0, 0, 0]))[0]
 
+    def close(self):
+        super().close()
+        if self.window is not None:
+            pygame.display.quit()
+            pygame.quit()
+
     def _destroy(self):
         if not self.main_base: return
         self.world.contactListener = None
@@ -234,7 +240,7 @@ class RocketLander(gym.Env):
         if self.render_mode == "human":
             self._render_frame()
 
-        return np.array(state), reward, done, {}  # {} = info (required by parent class)
+        return np.array(state), reward, done, False, {}  # {} = info (required by parent class)
 
     """ PROBLEM SPECIFIC - PHYSICS, STATES, REWARDS"""
 
