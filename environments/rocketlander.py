@@ -5,17 +5,23 @@ Description: This is the rocket lander simulation built on top of the gym lunar 
              action problem (as opposed to discretized).
 """
 
+from typing import Tuple, List
+
 from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener)
 import numpy as np
 import Box2D
-from gym.envs.classic_control import rendering
-import gym
-from gym import spaces
-from gym.utils import seeding
+import gymnasium as gym
+# from gymnasium.envs.classic_control import rendering
+import pygame
+from pygame import gfxdraw
+from gymnasium import spaces
+from gymnasium.utils import seeding
 import logging
-import pyglet
+# import pyglet
 from itertools import chain
 from constants import *
+
+
 
 
 # This contact detector is equivalent the one implemented in Lunar Lander
@@ -49,9 +55,9 @@ class RocketLander(gym.Env):
         'video.frames_per_second': FPS
     }
 
-    def __init__(self, settings):
-        self._seed()
-        self.viewer = None
+    def __init__(self, settings, render_mode=None):
+        # self._seed()
+        # self.viewer = None
         self.world = Box2D.b2World(gravity=(0, -GRAVITY))
         self.main_base = None
         self.barge_base = None
@@ -83,15 +89,25 @@ class RocketLander(gym.Env):
         self.action_space = [0, 0, 0]       # Main Engine, Nozzle Angle, Left/Right Engine
         self.untransformed_state = [0] * 6  # Non-normalized state
 
+        # rendering
+        assert render_mode is None or render_mode in self.metadata["render.modes"]
+        self.render_mode = render_mode
+        self.window = None
+        self.clock = None
+
         self.reset()
 
     """ INHERITED """
 
-    def _seed(self, seed=None):
-        self.np_random, returned_seed = seeding.np_random(seed)
-        return returned_seed
+    # def _seed(self, seed=None):
+    #     self.np_random, returned_seed = seeding.np_random(seed)
+    #     return returned_seed
 
-    def _reset(self):
+    def reset(self, seed=None, options=None):
+        """Reset the environment
+        """
+        super().reset(seed=seed)
+
         self._destroy()
         self.game_over = False
         self.world.contactListener_keepref = ContactDetector(self)
@@ -138,7 +154,7 @@ class RocketLander(gym.Env):
             self.adjust_dynamics(y_dot=y_dot, x_dot=x_dot, theta=theta, theta_dot=theta_dot)
 
         # Step through one action = [0, 0, 0] and return the state, reward etc.
-        return self._step(np.array([0, 0, 0]))[0]
+        return self.step(np.array([0, 0, 0]))[0]
 
     def _destroy(self):
         if not self.main_base: return
@@ -151,7 +167,7 @@ class RocketLander(gym.Env):
         self.world.DestroyBody(self.legs[0])
         self.world.DestroyBody(self.legs[1])
 
-    def _step(self, action):
+    def step(self, action):
         assert len(action) == 3  # Fe, Fs, psi
 
         # Check for contact with the ground
@@ -214,6 +230,9 @@ class RocketLander(gym.Env):
             reward = +10
 
         self._update_particles()
+
+        if self.render_mode == "human":
+            self._render_frame()
 
         return np.array(state), reward, done, {}  # {} = info (required by parent class)
 
@@ -403,7 +422,7 @@ class RocketLander(gym.Env):
 
     # Problem specific - LINKED
     def _create_rocket(self, initial_coordinates=(W / 2, H / 1.2)):
-        body_color = (1, 1, 1)
+        body_color = (255, 255, 255)
         # ----------------------------------------------------------------------------------------
         # LANDER
 
@@ -610,8 +629,8 @@ class RocketLander(gym.Env):
         self.cloud_poly = []
         numberofdiscretepoints = 3
 
-        initial_y = (VIEWPORT_H * np.random.uniform(y_range[0], y_range[1], 1)) / SCALE
-        initial_x = (VIEWPORT_W * np.random.uniform(x_range[0], x_range[1], 1)) / SCALE
+        initial_y = (VIEWPORT_H * np.random.uniform(y_range[0], y_range[1])) / SCALE
+        initial_x = (VIEWPORT_W * np.random.uniform(x_range[0], x_range[1])) / SCALE
 
         y_coordinates = np.random.normal(0, y_variance, numberofdiscretepoints)
         x_step = np.linspace(initial_x, initial_x + np.random.uniform(1, 6), numberofdiscretepoints + 1)
@@ -636,30 +655,45 @@ class RocketLander(gym.Env):
             self.remaining_fuel = 0
 
     @staticmethod
+    def _cast_tuple_to_int(t: Tuple) -> Tuple:
+        return tuple([int(item) for item in t])
+
+    @staticmethod
+    def _scale_list_of_tuples(l: List[Tuple], scale: int) -> List[Tuple]:
+        out = []
+        for t in l:
+            out.append(tuple([item * scale for item in t]))
+        return out
+
+    @staticmethod
     def _create_labels(labels):
         labels_dict = {}
         y_spacing = 0
         for text in labels:
-            labels_dict[text] = pyglet.text.Label(text, font_size=15, x=W / 2, y=H / 2,  # - y_spacing*H/10,
-                                                  anchor_x='right', anchor_y='center', color=(0, 255, 0, 255))
+            # labels_dict[text] = pyglet.text.Label(text, font_size=15, x=W / 2, y=H / 2,  # - y_spacing*H/10,
+            #                                       anchor_x='right', anchor_y='center', color=(0, 255, 0, 255))
             y_spacing += 1
         return labels_dict
 
     """ RENDERING """
 
-    def _render(self, mode='human', close=False):
-        if close:
-            if self.viewer is not None:
-                self.viewer.close()
-                self.viewer = None
-            return
+    def render(self):
+        if self.render_mode == "rgb_array":
+            return self._render_frame()
 
-        # This can be removed since the code is being update to utilize env.refresh() instead
-        # Kept here for backwards compatibility purposes
-        # Viewer Creation
-        if self.viewer is None:  # Initial run will enter here
-            self.viewer = rendering.Viewer(VIEWPORT_W, VIEWPORT_H)
-            self.viewer.set_bounds(0, W, 0, H)
+    def _render_frame(self):
+        """Render a single frame
+        """
+        if self.window is None and self.render_mode == "human":
+            pygame.init()
+            pygame.display.init()
+            self.window = pygame.display.set_mode((VIEWPORT_W, VIEWPORT_H))
+        if self.clock is None and self.render_mode == "human":
+            self.clock = pygame.time.Clock()
+
+        self.canvas = pygame.Surface((VIEWPORT_W, VIEWPORT_H))
+        pygame.transform.scale(self.canvas, (SCALE, SCALE))
+        self.canvas.fill((255, 255, 255))
 
         self._render_environment()
         self._render_lander()
@@ -670,6 +704,22 @@ class RocketLander(gym.Env):
         # Commented out to be able to draw from outside the class using self.refresh
         # return self.viewer.render(return_rgb_array=mode == 'rgb_array')
 
+        self.canvas = pygame.transform.flip(self.canvas, False, True)
+
+        if self.render_mode == "human":
+            # copies our drawings from canvas to visible window
+            self.window.blit(self.canvas, self.canvas.get_rect())
+            pygame.event.pump()
+            pygame.display.update()
+
+            # to ensure that human rendering occurs at a predefined framerate
+            self.clock.tick(self.metadata["video.frames_per_second"])
+        else:  # rgb_array
+            return np.transpose(
+                np.array(pygame.surfarray.pixels3d(self.canvas)), axes=(1, 0, 2)
+            )
+
+
     def refresh(self, mode='human', render=False):
         """
         Used instead of _render in order to draw user defined drawings from controllers, e.g. trajectories
@@ -678,14 +728,17 @@ class RocketLander(gym.Env):
         :param render:
         :return: Viewer
         """
+
         # Viewer Creation
-        if self.viewer is None:  # Initial run will enter here
-            self.viewer = rendering.Viewer(VIEWPORT_W, VIEWPORT_H)
-            self.viewer.set_bounds(0, W, 0, H)
+        # if self.viewer is None:  # Initial run will enter here
+
+        #     self.viewer = rendering.Viewer(VIEWPORT_W, VIEWPORT_H)
+        #     self.viewer.set_bounds(0, W, 0, H)
 
         if render:
             self.render()
-        return self.viewer.render(return_rgb_array=mode == 'rgb_array')
+
+        # return self.viewer.render(return_rgb_array=mode == 'rgb_array')
 
     def _render_lander(self):
         # --------------------------------------------------------------------------------------------------------------
@@ -696,26 +749,61 @@ class RocketLander(gym.Env):
             for f in obj.fixtures:
                 trans = f.body.transform
                 if type(f.shape) is circleShape:
-                    t = rendering.Transform(translation=trans * f.shape.pos)
-                    self.viewer.draw_circle(f.shape.radius, 20, color=obj.color1).add_attr(t)
-                    self.viewer.draw_circle(f.shape.radius, 20, color=obj.color2, filled=False,
-                                            linewidth=2).add_attr(t)
+                    pygame.draw.circle(
+                        self.canvas,
+                        color=obj.color1,
+                        center=trans * f.shape.pos * SCALE,
+                        radius=f.shape.radius * SCALE
+                    )
+                    pygame.draw.circle(
+                        self.canvas,
+                        color=obj.color2,
+                        center=trans * f.shape.pos * SCALE,
+                        radius=f.shape.radius * SCALE
+                    )
+                    # t = rendering.Transform(translation=trans * f.shape.pos)
+                    # self.viewer.draw_circle(f.shape.radius, 20, color=obj.color1).add_attr(t)
+                    # self.viewer.draw_circle(f.shape.radius, 20, color=obj.color2, filled=False,
+                    #                         linewidth=2).add_attr(t)
                 else:
                     # Lander
                     path = [trans * v for v in f.shape.vertices]
-                    self.viewer.draw_polygon(path, color=obj.color1)
-                    path.append(path[0])
-                    self.viewer.draw_polyline(path, color=obj.color2, linewidth=2)
+                    pygame.draw.polygon(
+                        self.canvas,
+                        color=obj.color1,
+                        points=self._scale_list_of_tuples(path, SCALE),
+                    )
+                    gfxdraw.aapolygon(
+                        self.canvas,
+                        self._scale_list_of_tuples(path, SCALE),
+                        obj.color1
+                    )
+                    pygame.draw.aalines(
+                        self.canvas,
+                        color=obj.color2,
+                        points=self._scale_list_of_tuples(path, SCALE),
+                        closed=True
+                    )
+                    # self.viewer.draw_polygon(path, color=obj.color1)
+                    # path.append(path[0])
+                    # self.viewer.draw_polyline(path, color=obj.color2, linewidth=2)
 
     def _render_clouds(self):
         for x in self.clouds:
-            self.viewer.draw_polygon(x, color=(1.0, 1.0, 1.0))
+            pygame.draw.polygon(
+                self.canvas,
+                color=(255, 255, 255),
+                points=self._scale_list_of_tuples(x, SCALE),
+            )
+            # self.viewer.draw_polygon(x, color=(1.0, 1.0, 1.0))
 
     def _update_particles(self):
         for obj in self.particles:
             obj.ttl -= 0.1
-            obj.color1 = (max(0.2, 0.2 + obj.ttl), max(0.2, 0.5 * obj.ttl), max(0.2, 0.5 * obj.ttl))
-            obj.color2 = (max(0.2, 0.2 + obj.ttl), max(0.2, 0.5 * obj.ttl), max(0.2, 0.5 * obj.ttl))
+            color_red = min(255, max(50, 50 + 255 * obj.ttl))
+            color_green_blue = min(255, max(50, 0.5 * 255 * obj.ttl))
+            obj.color1 = self._cast_tuple_to_int((color_red, color_green_blue, color_green_blue))
+            obj.color2 = self._cast_tuple_to_int((color_red, color_green_blue, color_green_blue))
 
         self._clean_particles(False)
 
@@ -726,18 +814,39 @@ class RocketLander(gym.Env):
         # Sky Boundaries
 
         for p in self.sky_polys:
-            self.viewer.draw_polygon(p, color=(0.83, 0.917, 1.0))
+
+            pygame.draw.polygon(
+                self.canvas,
+                color=(212, 234, 255),
+                points=self._scale_list_of_tuples(p, SCALE)
+            )
+            # self.viewer.draw_polygon(p, color=(0.83, 0.917, 1.0))
 
         # Landing Barge
-        self.viewer.draw_polygon(self.landing_barge_coordinates, color=(0.1, 0.1, 0.1))
+        pygame.draw.polygon(
+            self.canvas,
+            color=(25, 25, 25),
+            points=self._scale_list_of_tuples(self.landing_barge_coordinates, SCALE),
+        )
+        # self.viewer.draw_polygon(self.landing_barge_coordinates, color=(0.1, 0.1, 0.1))
 
         for g in self.ground_polys:
-            self.viewer.draw_polygon(g, color=(0, 0.5, 1.0))
+            pygame.draw.polygon(
+                self.canvas,
+                color=(0, 128, 255),
+                points=self._scale_list_of_tuples(g, SCALE),
+            )
+            # self.viewer.draw_polygon(g, color=(0, 0.5, 1.0))
 
         for i, s in enumerate(self.sea_polys):
             k = 1 - (i + 1) / SEA_CHUNKS
             for poly in s:
-                self.viewer.draw_polygon(poly, color=(0, 0.5 * k, 1.0 * k + 0.5))
+                pygame.draw.polygon(
+                    self.canvas,
+                    color=self._cast_tuple_to_int((0, 0.5*255*k, min(255, 255*k + 128))),
+                    points=self._scale_list_of_tuples(poly, SCALE)
+                )
+                # self.viewer.draw_polygon(poly, color=(0, 0.5 * k, 1.0 * k + 0.5))
 
         if self.settings["Clouds"]:
             self._render_clouds()
@@ -748,9 +857,26 @@ class RocketLander(gym.Env):
             flagy2 = self.landing_barge_coordinates[2][1] + 25 / SCALE
 
             polygon_coordinates = [(x, flagy2), (x, flagy2 - 10 / SCALE), (x + 25 / SCALE, flagy2 - 5 / SCALE)]
-            self.viewer.draw_polygon(polygon_coordinates, color=(1, 0, 0))
-            self.viewer.draw_polyline(polygon_coordinates, color=(0, 0, 0))
-            self.viewer.draw_polyline([(x, flagy1), (x, flagy2)], color=(0.5, 0.5, 0.5))
+            pygame.draw.polygon(
+                self.canvas,
+                color=(255, 0, 0),
+                points=self._scale_list_of_tuples(polygon_coordinates, SCALE),
+            )
+            pygame.draw.lines(
+                self.canvas,
+                color=(0, 0, 0),
+                closed=True,
+                points=self._scale_list_of_tuples(polygon_coordinates, SCALE),
+            )
+            pygame.draw.lines(
+                self.canvas,
+                color=(128, 128, 128),
+                closed=True,
+                points=self._scale_list_of_tuples([(x, flagy1), (x, flagy2)], SCALE),
+            )
+            # self.viewer.draw_polygon(polygon_coordinates, color=(1, 0, 0))
+            # self.viewer.draw_polyline(polygon_coordinates, color=(0, 0, 0))
+            # self.viewer.draw_polyline([(x, flagy1), (x, flagy2)], color=(0.5, 0.5, 0.5))
 
         # --------------------------------------------------------------------------------------------------------------
 
@@ -764,11 +890,27 @@ class RocketLander(gym.Env):
         :return:
         """
         offset = 0.2
-        self.viewer.draw_polyline([(x, y - offset), (x, y + offset)], linewidth=2)
-        self.viewer.draw_polyline([(x - offset, y), (x + offset, y)], linewidth=2)
+        pygame.draw.lines(
+            self.canvas,
+            color=(0, 0, 0),
+            closed=False,
+            points=[(x, y - offset), (x, y + offset)],
+            width=2
+        )
+        pygame.draw.lines(
+            self.canvas,
+            color=(0, 0, 0),
+            closed=False,
+            points=[(x - offset, y), (x + offset, y)],
+            width=2
+        )
+        # self.viewer.draw_polyline([(x, y - offset), (x, y + offset)], linewidth=2)
+        # self.viewer.draw_polyline([(x - offset, y), (x + offset, y)], linewidth=2)
 
-    def draw_polygon(self, color=(0.2, 0.2, 0.2), **kwargs):
+    def draw_polygon(self, color=(50, 50, 50), **kwargs):
         # path expected as (x,y)
+        raise NotImplementedError("Need to update method")
+
         if self.viewer is not None:
             path = kwargs.get('path')
             if path is not None:
@@ -778,7 +920,10 @@ class RocketLander(gym.Env):
                 y = kwargs.get('y')
                 self.viewer.draw_polygon([(xx, yy) for xx, yy in zip(x, y)], color=color)
 
-    def draw_line(self, x, y, color=(0.2, 0.2, 0.2)):
+    def draw_line(self, x, y, color=(50, 50, 50)):
+
+        raise NotImplementedError("Need to update method")
+
         self.viewer.draw_polyline([(xx, yy) for xx, yy in zip(x, y)], linewidth=2, color=color)
 
     def move_barge(self, x_movement, left_height, right_height):
@@ -864,20 +1009,22 @@ class RocketLander(gym.Env):
         ddot_theta = (Fe * psi * (L1 + LN) - L2 * Fs) / INERTIA
         return ddot_x, ddot_y, ddot_theta
 
-    def apply_random_x_disturbance(self, epsilon, left_or_right, x_force=2000):
+    # def apply_random_x_disturbance(self, epsilon, left_or_right, x_force=2000):
+    def apply_random_x_disturbance(self, epsilon, x_force=2000):
         if np.random.rand() < epsilon:
-            if left_or_right:
-                self.apply_disturbance('random', x_force, 0)
-            else:
-                self.apply_disturbance('random', -x_force, 0)
+            self.apply_disturbance('random', x_force, 0)
+            # if left_or_right:
+                # self.apply_disturbance('random', x_force, 0)
+            # else:
+            #     self.apply_disturbance('random', -x_force, 0)
 
     def apply_random_y_disturbance(self, epsilon, y_force=2000):
         if np.random.rand() < epsilon:
-            self.apply_disturbance('random', 0, -y_force)
+            self.apply_disturbance('random', 0, y_force)
 
-    def move_barge_randomly(self, epsilon, left_or_right, x_movement=0.05):
+    def move_barge_randomly(self, epsilon, move_left, x_movement=0.05):
         if np.random.rand() < epsilon:
-            if left_or_right:
+            if move_left:
                 self.move_barge(x_movement=x_movement, left_height=0, right_height=0)
             else:
                 self.move_barge(x_movement=-x_movement, left_height=0, right_height=0)
@@ -905,8 +1052,8 @@ class RocketLander(gym.Env):
             if isinstance(force, str):
                 x, y = args
                 self.lander.ApplyForceToCenter((
-                    self.np_random.uniform(x),
-                    self.np_random.uniform(y)
+                    self.np_random.uniform(low=-x, high=x),  # can be left or right
+                    self.np_random.uniform(low=-y, high=0)  # only up (?)
                 ), True)
             elif isinstance(force, tuple):
                 self.lander.ApplyForceToCenter(force, True)

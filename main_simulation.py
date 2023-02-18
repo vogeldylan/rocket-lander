@@ -16,7 +16,7 @@ if __name__ == "__main__":
                 'Starting Y-Pos Constant': 1,
                 'Initial Force': 'random'}  # (6000, -10000)}
 
-    env = RocketLander(settings)
+    env = RocketLander(settings, render_mode="human")
     s = env.reset()
 
     from control_and_ai.pid import PID_Benchmark
@@ -24,7 +24,7 @@ if __name__ == "__main__":
     # Initialize the PID algorithm
     pid = PID_Benchmark()
 
-    left_or_right_barge_movement = np.random.randint(0, 2)
+    left_barge_movement = np.random.uniform() < 0.5
     epsilon = 0.05
     total_reward = 0
     episode_number = 5
@@ -39,15 +39,16 @@ if __name__ == "__main__":
             # Optional render
             env.render()
             # Draw the target
-            env.draw_marker(env.landing_coordinates[0], env.landing_coordinates[1])
+            # env.draw_marker(env.landing_coordinates[0], env.landing_coordinates[1])
             # Refresh render
-            env.refresh(render=False)
+            # env.refresh(render=False)
 
             # When should the barge move? Water movement, dynamics etc can be simulated here.
             if s[LEFT_GROUND_CONTACT] == 0 and s[RIGHT_GROUND_CONTACT] == 0:
-                env.move_barge_randomly(epsilon, left_or_right_barge_movement)
+                env.move_barge_randomly(epsilon, left_barge_movement)
                 # Random Force on rocket to simulate wind.
-                env.apply_random_x_disturbance(epsilon=0.005, left_or_right=left_or_right_barge_movement)
+                # env.apply_random_x_disturbance(epsilon=0.005, left_or_right=left_barge_movement)
+                env.apply_random_x_disturbance(epsilon=0.005)
                 env.apply_random_y_disturbance(epsilon=0.005)
 
             # Touch down or pass abs(THETA_LIMIT)
